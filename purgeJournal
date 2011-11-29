@@ -1,0 +1,4 @@
+. /xapi/scripts/profile
+cd /xapi/data
+$gtmrun ^purgeJournal purgeJournal
+

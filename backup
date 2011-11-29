@@ -1,0 +1,4 @@
+. /xapi/scripts/profile
+cd /xapi/data
+rm /xapi/backup/*
+$mupip backup -database -online DEFAULT,NODE,NODEX,NODETAG,WAY,WAYX,WAYTAG /xapi/backup

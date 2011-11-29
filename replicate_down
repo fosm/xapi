@@ -1,0 +1,3 @@
+. ./profile_source
+cd ../zappy1/data06
+$mupip replic -source -shutdown -t=0

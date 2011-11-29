@@ -1,0 +1,15 @@
+	. /home/etienne/scripts06/profile_zappy1
+	cd /home/etienne/zappy1/data06
+	export GTMCI=/home/etienne/scripts06/zappy.ci
+	$mupip rundown -file node.dat
+	$mupip rundown -file nodetag.dat
+        $mupip rundown -file nodex.dat
+        $mupip rundown -file way.dat
+        $mupip rundown -file waytag.dat
+        $mupip rundown -file wayx.dat
+        $mupip rundown -file osmTemp.dat
+        $mupip rundown -file osmapi.dat
+	(/home/etienne/scripts06/zappyd1 </dev/null >/dev/null 2>>zappyd1.err &)
+        (/home/etienne/scripts06/zappyd1 </dev/null >/dev/null 2>>zappyd1.err &)
+        (/home/etienne/scripts06/zappyd1 </dev/null >/dev/null 2>>zappyd1.err &)
+	ps -Al|grep zappy

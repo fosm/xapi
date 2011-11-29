@@ -1,0 +1,5 @@
+# Start up a xapi daemon
+source profile
+export GTMCI=$zappy/scripts/xapi.ci
+cd $zappy/data
+($zappy/scripts/xapid </dev/null >/dev/null 2>>xapid.err &)

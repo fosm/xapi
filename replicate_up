@@ -1,0 +1,5 @@
+. ./profile_source
+cd ../zappy1/data06
+$mupip set -reg PERCENT -replic=ON
+$mupip replic -instance_create -name=source.repl
+$mupip replicate -source -start -secondary=80.68.90.42:8801 -log=source.log -instsec=receiver.repl -root -buff=1

@@ -1,0 +1,29 @@
+#################################################################
+#								#
+#	Copyright 2001, 2006 Fidelity Information Services, Inc	#
+#								#
+#	This source code contains the intellectual property	#
+#	of its copyright holder(s), and is made available	#
+#	under a license.  If you do not know the terms of	#
+#	the license, please stop and do not read further.	#
+#								#
+#################################################################
+zappy='/home/etienne' ; export zappy
+gtm_dist="$zappy/gtm"; export gtm_dist
+gtmx="$zappy/gtmx"; export gtmx
+gtmgbldir="logStats1.gld"; export gtmgbldir
+if [ "$gtm_chset" = "UTF-8" ] ; then
+        if [ -e $gtm_dist/utf8 ] ; then
+                gtm_dist="$gtm_dist/utf8"; export gtm_dist
+        fi
+fi
+gtmroutines="$zappy/scripts06/o($zappy/scripts06 $zappy/serenji $gtmx $gtm_dist)"; export gtmroutines
+gtm="$gtmx/gtmrun ^direct gtm"; export gtm
+gtmrun="$gtmx/gtmrun" ; export gtmrun
+mupip="$gtm_dist/mupip"; export mupip
+lke="$gtm_dist/lke"; export lke
+gde="$gtmx/gtmrun ^GDE"; export gde
+dse="$gtm_dist/dse"; export dse
+PATH=$PATH:$gtm_dist
+gtm_repl_instname="logStats1";export gtm_repl_instname
+gtm_repl_instance="deadEnd"; export gtm_repl_instance

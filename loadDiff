@@ -1,0 +1,3 @@
+. profile
+cd /$zappy/data
+$gtmrun ^loadDiff xapiDiff

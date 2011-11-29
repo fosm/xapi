@@ -1,0 +1,13 @@
+zappy='/home/etienne' ; export zappy
+gtm_dist="$zappy/gtm"; export gtm_dist
+gtmx="$zappy/gtmx"; export gtmx
+gtmgbldir="source.gld"; export gtmgbldir
+gtmroutines="$zappy/scripts06/o($zappy/scripts06 $zappy/serenji $gtmx $gtm_dist)"; export gtmroutines
+gtm="$gtmx/gtmrun ^direct gtm"; export gtm
+gtmrun="$gtmx/gtmrun" ; export gtmrun
+mupip="$gtm_dist/mupip"; export mupip
+lke="$gtm_dist/lke"; export lke
+gde="$gtmx/gtmrun ^GDE"; export gde
+dse="$gtm_dist/dse"; export dse
+PATH=$PATH:$gtm_dist
+gtm_repl_instance="source.repl";export gtm_repl_instance
