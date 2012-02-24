@@ -274,8 +274,9 @@ addNodeFromChangeset(changeset,nodeId,version)	; Public ; Add a node from a chan
 	s ^export($$nowZulu^date(),"n",changeset,nodeId,version)=""
 	;
 	; Update metrics
-	i version=1 s ^metric("nodeCount")=$g(^metric("nodeCount"))+1
-	i delete s ^metric("nodeCount")=$g(^metric("nodeCount"))-1
+	i version=1 d update^metric("osmNodeCount",1)
+	i delete d update^metric("osmNodeCount",-1)
+	d update^metric("osmNodeEdits",1)
 	;
 	q
 	
@@ -433,6 +434,11 @@ addDiff(sNode,delete,changeset)	; Public ; Add a node from the diff upload API (
 	s ^response($j,rSeq,"element")="node"
 	;
 	d onEdit^user(uid)
+	;
+	; Update metrics
+	i version=1 d update^metric("fosmNodeCount",1)
+	i delete d update^metric("fosmNodeCount",-1)
+	d update^metric("fosmNodeEdits",1)
 	;
 	q 1
 	

@@ -1,0 +1,7 @@
+gzip -c /home/etienne/zappy1/backup/nodetag.dat >/sunstorage/data/xapi/backup/nodetag.dat.gz
+gzip -c /home/etienne/zappy1/backup/node.dat >/sunstorage/data/xapi/backup/node.dat.gz
+gzip -c /home/etienne/zappy1/backup/nodex.dat >/sunstorage/data/xapi/backup/nodex.dat.gz
+gzip -c /home/etienne/zappy1/backup/way.dat >/sunstorage/data/xapi/backup/way.dat.gz
+gzip -c /home/etienne/zappy1/backup/wayx.dat >/sunstorage/data/xapi/backup/wayx.dat.gz
+gzip -c /home/etienne/zappy1/backup/waytag.dat >/sunstorage/data/xapi/backup/waytag.dat.gz
+gzip -c /home/etienne/zappy1/backup/osmapi.dat >/sunstorage/data/xapi/backup/osmapi.dat.gz

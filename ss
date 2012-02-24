@@ -1,0 +1,3 @@
+        . /home/etienne/scripts06/profile_zappy1
+        cd /home/etienne/zappy1/data06
+        $gtmrun ^serenji Serenji

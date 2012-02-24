@@ -524,10 +524,7 @@ switchHbom(ucivol)	;
 	;
 	s uci=$p(ucivol,",",1)
 	s vol=$p(ucivol,",",2)
-
-;       The $zu(expression) function returns 1 if the expression is numeric, 0 otherwise
-;	s ucivolno=$zu(uci,vol)
-	s ucivolno=1
+	s ucivolno=$zu(uci,vol)
 	s ucino=$p(ucivolno,",",1)
 	i ucino="" q "BadUCI"/0
 	;

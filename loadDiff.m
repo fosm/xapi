@@ -154,9 +154,11 @@ oneFile(filename,sFile)	      ; Public ; Load data from filename
 	; Apply relations first, then ways and then nodes.  In the case of a way deletion it's nodes cannot be deleted
 	; until the way has been deleted.  Also OSM may try to delete elements that are still in use in fosm.  In either case
 	; the referential integrity checks will prevent the node from being deleted.
+	; Why apply backwards?  Nodes first surely?  
 	; d apply^relation(fileId)
 	; d apply^way(fileId)
 	d applyNodes
+	d applyWays
 	;
 	s ^loadDiff(fileId,"end")=$h
 	s ^loadDiff(fileId,"totalLines")=sFile("recordCount")
@@ -191,24 +193,28 @@ applyNodes	; Apply node changes in this file to the active database
 	. ; Is the user blocked
 	. i uid'="",$g(^user(uid,"osmImport"))="block" d  q
 	. . s blockedByUid=$g(^user(uid,"blockedByUid"),uid)
-	. . d log^conflict("node",nodeId,blockedByUid,a,"User #"_uid_" ("_^user(uid,"name")_") blocked by "_blockedByUid) q
+	. . d log^conflict("node",nodeId,blockedByUid,a,"User #"_uid_" ("_$g(^user(uid,"name"),"unknown")_") blocked by "_blockedByUid) q
 	. ;
 	. ; Don't load older versions
 	. i currentVersion>version q
 	. ;
-	. ; Has the element been forked
-	. s fork=0
-	. i currentVersion'="" d
+	. s quit=0
+	. i currentVersion'="" d  i quit q  ; In a test database many nodes will be missing
 	. . s currentChangesetId=^nodeVersion(nodeId,"v",currentVersion)
-	. . s currentA=$g(^c(currentChangesetId,"n",nodeId,"v",currentVersion)) ; The previous version may never have been in a changeset
-	. . s fork=$p(currentA,$c(1),6)
-	. ;
-	. i fork d  q
-	. . ;
-	. . ; Log conflict against user who edited in fosm
+	. . s currentA=$g(^c(currentChangesetId,"n",nodeId,"v",currentVersion,"a")) i currentA="" q
 	. . s currentUid=$p(currentA,$c(1),4)
-	. . i currentUid="" q
-	. . d log^conflict("node",nodeId,currentUid,a,"Edited in fosm")
+	. . s fork=$p(currentA,$c(1),6)
+	. . ;
+	. . ; Has the element been forked
+	. . ; Log conflict against user who edited in fosm
+	. . i fork d  s quit=1 q
+	. . . d log^conflict("node",nodeId,currentUid,a,"Edited in fosm")
+	. . ;
+	. . ; If the node is to be deleted, but the last editor has requested deletions to be preserved (eg because they are a ct_decliner)
+	. . ; then do not apply the change.
+	. . i visible="false",currentUid'="",$g(^user(currentUid,"osmImport"))="doNotDelete" d  s quit=1 q
+	. . . s blockedByUid=$g(^user(currentUid,"blockedByUid"),currentUid)
+	. . . d log^conflict("node",nodeId,blockedByUid,a,"Deletion of element belonging to #"_currentUid_" ("_$g(^user(currentUid,"name"),"unknown")_") preserved.  Do not delete requested by user #"_blockedByUid)
 	. ;
 	. ; If the node is to be deleted, but is still in-use then don't delete it.  Instead add it to the conflict file
 	. ; for manual inspection
@@ -218,6 +224,51 @@ applyNodes	; Apply node changes in this file to the active database
 	q
 	
 	
+applyWays	; Apply way changes in this file to the active database
+	;
+	n nodeId,a,version,changeset,uid,visible
+	n fork
+	n currentVersion,currentChangeset,currentA,currentUid,blockedByUid
+	;
+	s wayId=""
+	f  d  i wayId="" q
+	. s wayId=$o(^temp($j,"loadDiff","w",wayId)) i wayId="" q
+	. s a=^temp($j,"loadDiff","w",wayId,"a")
+	. s version=$p(a,$c(1),1)
+	. s changeset=$p(a,$c(1),2)
+	. s uid=$p(a,$c(1),4)
+	. s visible=$p(a,$c(1),5)
+	. s currentVersion=$$currentVersion^way(wayId)
+	. ;
+	. ; Is the user blocked
+	. i uid'="",$g(^user(uid,"osmImport"))="block" d  q
+	. . s blockedByUid=$g(^user(uid,"blockedByUid"),uid)
+	. . d log^conflict("way",wayId,blockedByUid,a,"User #"_uid_" ("_$g(^user(uid,"name"),"unknown")_") blocked by "_blockedByUid) q
+	. ;
+	. ; Don't load older versions
+	. i currentVersion>version q
+	. ;
+	. s quit=0
+	. i currentVersion'="" d  i quit q  ; In a test database many ways will be missing
+	. . s currentChangesetId=$g(^wayVersion(wayId,"v",currentVersion))
+	. . i currentChangesetId="" s currentChangesetId=^waytag(wayId,"@changeset")
+	. . s currentUid=$g(^c(currentChangesetId,"w",wayId,"v",currentVersion,"t","@uid"))
+	. . s fork=$g(^c(currentChangesetId,"w",wayId,"v",currentVersion,"t","@fork"))
+	. . ;
+	. . ; Has the element been forked
+	. . ; Log conflict against user who edited in fosm
+	. . i fork d  s quit=1 q
+	. . . d log^conflict("way",wayId,currentUid,a,"Edited in fosm")
+	. . ;
+	. . ; If the way is to be deleted, but the last editor has requested deletions to be preserved (eg because they are a ct_decliner)
+	. . ; then do not apply the change.
+	. . i visible="false",currentUid'="",$g(^user(currentUid,"osmImport"))="doNotDelete" d  s quit=1 q
+	. . . s blockedByUid=$g(^user(currentUid,"blockedByUid"),currentUid)
+	. . . d log^conflict("way",wayId,blockedByUid,a,"Deletion of element belonging to #"_currentUid_" ("_$g(^user(currentUid,"name"),"unknown")_") preserved.  Do not delete requested by user #"_blockedByUid)
+	. ;
+	. d addWayFromChangeset^way(changeset,wayId,version)
+	q
+	
 	
 	
 delete	 ; Delete some stuff, read all lines until end of delete element
@@ -225,7 +276,7 @@ delete	 ; Delete some stuff, read all lines until end of delete element
 	. s line=$$read^stream(.sFile)
 	. i sFile("recordCount")#10000=0 d checkpoint
 	. i line["<node" s gNodeDeleteCount=gNodeDeleteCount+1 d import^node(.sFile,1) q
-	. i line["<way" s gWayDeleteCount=gWayDeleteCount+1 d add^way(.sFile,1) q
+	. i line["<way" s gWayDeleteCount=gWayDeleteCount+1 d import^way(.sFile,1) q
 	. i line["<relation" s gRelDeleteCount=gRelDeleteCount+1 d add^relation(.sFile,1) q
 	;
 	q
@@ -236,38 +287,9 @@ modify	 ; Create or modify stuff, read all lines until end of modify or create e
 	. s line=$$read^stream(.sFile)
 	. i sFile("recordCount")#10000=0 d checkpoint
 	. i line["<node" s gNodeModifyCount=gNodeModifyCount+1 d import^node(.sFile,0) q
-	. i line["<way" s gWayModifyCount=gWayModifyCount+1 d add^way(.sFile,0) q
+	. i line["<way" s gWayModifyCount=gWayModifyCount+1 d import^way(.sFile,0) q
 	. i line["<relation" s gRelModifyCount=gRelModifyCount+1 d add^relation(.sFile,0) q
 	;
-	q
-	
-	
-nodeDelete(line)	; Private ; Delete a node and all it's indexes
-	;
-	n nodeId
-	;
-	s nodeId=$p($p(line,"id="_q,2),q,1)
-	d delete^node(nodeId)
-	q
-	
-	
-wayDelete(line)	; Private ; Delete a way
-	;
-	n wayId,changeset
-	;
-	s wayId=$p($p(line,"id="_q,2),q,1)
-	s changeset=$p($p(line,"changeset=""",2),"""",1)
-	;
-	d delete^way(wayId,changeset)
-	q
-	
-	
-relationDelete(line)	   ; Private ; Delete a relation
-	;
-	n relationId
-	;
-	s relationId=$p($p(line,"id="_q,2),q,1)
-	d delete^relation(relationId)
 	q
 	
 	

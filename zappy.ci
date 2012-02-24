@@ -1,0 +1,3 @@
+zappyd :void start^serverLink(I:gtm_char_t*, I:gtm_char_t*)
+
+zappy :void open03a^serverLink(I:gtm_char_t*, I:gtm_char_t*, I:gtm_char_t*)

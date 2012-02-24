@@ -22,7 +22,7 @@ add(sRelation,delete)	 ; Public ; Add a relation
 	;
 	n line,relationId,users,lat,lon,timestamp,user,qsBox,uid,version,changeset
 	n bllat,bllon,trlat,trlon
-	n currentUid,a,blockedByUid
+	n conflict,currentUid,a,blockedByUid
 	;
 	s line=sRelation("current")
 	;
@@ -42,44 +42,42 @@ add(sRelation,delete)	 ; Public ; Add a relation
 	. . s line=$$read^stream(.sRelation)
 	;
 	; Conflict checks
+	s conflict=0
 	s currentUid=$g(^relationtag(relationId,"@uid"),0)
 	s a=version_$c(1)_changeset_$c(1)_timestamp_$c(1)_uid
 	;
 	; Don't load forked elements
-	i ($d(^relationtag(relationId,"@fork"))) d  q
-	. ;
-	. ; Log conflict
+	i 'conflict,$d(^relationtag(relationId,"@fork")) d
+	. s conflict=1
 	. d log^conflict("relation",relationId,currentUid,a,"Edited in fosm")
-	. ;
-	. ; Skip the rest of the element
-	. i line["/>" q
-	. f  d  i line["</relation>" q
-	. . s line=$$read^stream(.sRelation)
 	;
 	; Don't load edits from blocked users
-	i uid'="",$g(^user(uid,"osmImport"))="block" d  q
+	i 'conflict,uid'="",$g(^user(uid,"osmImport"))="block" d
+	. s conflict=1
 	. s blockedByUid=$g(^user(uid,"blockedByUid"),uid)
-	. ;
-	. ; Log conflict
-	. d log^conflict("relation",relationId,blockedByUid,a,"User #"_uid_" ("_^user(uid,"name")_") blocked by "_blockedByUid)
-	. ;
-	. ; Skip the rest of the element
-	. i line["/>" q
-	. f  d  i line["</relation>" q
-	. . s line=$$read^stream(.sRelation)
+	. d log^conflict("relation",relationId,blockedByUid,a,"User #"_uid_" ("_$g(^user(uid,"name"),"unknown")_") blocked by "_blockedByUid)
 	;
-	d delete(relationId,delete)
+	; Don't delete if current user's edits are marked to be preserved
+	i 'conflict,delete,currentUid'="",$g(^user(currentUid,"osmImport"))="doNotDelete" d
+	. s conflict=1
+	. s blockedByUid=$g(^user(currentUid,"blockedByUid"),currentUid)
+	. d log^conflict("relation",relationId,blockedByUid,a,"Deletion of element belonging to #"_currentUid_" ("_$g(^user(currentUid,"name"),"unknown")_") preserved.  Do not delete requested by user #"_blockedByUid)
 	;
-	d setTag(relationId,"@timestamp",timestamp,changeset,version,delete)
-	d setTag(relationId,"@user",user,changeset,version,delete)
-	d setTag(relationId,"@uid",uid,changeset,version,delete)
-	d setTag(relationId,"@version",version,changeset,version,delete)
-	d setTag(relationId,"@changeset",changeset,changeset,version,delete)
-	i delete d setTag(relationId,"@visible","false",changeset,version,delete)
+	; If no conflict then delete old relation
+	i 'conflict d delete(relationId,delete)
+	;
+	d setTag(relationId,"@timestamp",timestamp,changeset,version,delete,conflict)
+	d setTag(relationId,"@user",user,changeset,version,delete,conflict)
+	d setTag(relationId,"@uid",uid,changeset,version,delete,conflict)
+	d setTag(relationId,"@version",version,changeset,version,delete,conflict)
+	d setTag(relationId,"@changeset",changeset,changeset,version,delete,conflict)
+	i delete d setTag(relationId,"@visible","false",changeset,version,delete,conflict)
+	i conflict d setTag(relationId,"@conflict","true",changeset,version,delete,conflict)
 	;
 	; Changeset by version index
-	s ^relationVersion(relationId,"v",version)=changeset
-	s ^relationVersion(relationId,"c",changeset,version)=""
+	i 'conflict d
+	. s ^relationVersion(relationId,"v",version)=changeset
+	. s ^relationVersion(relationId,"c",changeset,version)=""
 	;
 	; Changeset headers
 	s ^c(changeset)=""
@@ -89,18 +87,25 @@ add(sRelation,delete)	 ; Public ; Add a relation
 	s sequenceNo=0
 	i line'["/>" f  d  i line["</relation>" q
 	. s line=$$read^stream(.sRelation)
-	. i line["<member" s sequenceNo=sequenceNo+1 d addMember(.sRelation,relationId,sequenceNo,changeset,version,delete)
-	. i line["<tag" d addTag(.sRelation,relationId,changeset,version,delete)
+	. i line["<member" s sequenceNo=sequenceNo+1 d addMember(.sRelation,relationId,sequenceNo,changeset,version,delete,conflict) q
+	. i line["<tag" d addTag(.sRelation,relationId,changeset,version,delete,conflict) q
 	;
-	i 'delete d indexTags(relationId)
+	i 'conflict,'delete d indexTags(relationId)
 	;
 	; Create export index
-	s ^export($$nowZulu^date(),"r",changeset,relationId,version)=""
+	i 'conflict s ^export($$nowZulu^date(),"r",changeset,relationId,version)=""
 	;
 	; Update user class
 	d add^user(uid,user)
 	;
 	d onEdit^user(uid)
+	;
+	; Update metrics (don't count conflicted relations)
+	i 'conflict d
+	. i version=1 d update^metric("osmRelationCount",1)
+	. i delete d update^metric("osmRelationCount",-1)
+	. d update^metric("osmRelationEdits",1)
+	;
 	q
 	
 	
@@ -143,13 +148,13 @@ addDiff(sRelation,delete,changeset)	 ; Public ; Add a relation
 	s user=^user(uid,"name")
 	i user["'" s user=$$xmlEscapeApostrophe(user)
 	;
-	d setTag(relationId,"@timestamp",timestamp,changeset,version,delete)
-	d setTag(relationId,"@user",user,changeset,version,delete)
-	d setTag(relationId,"@uid",uid,changeset,version,delete)
-	d setTag(relationId,"@version",version,changeset,version,delete)
-	d setTag(relationId,"@changeset",changeset,changeset,version,delete)
-	d setTag(relationId,"@fork",1,changeset,version,delete)
-	i delete d setTag(relationId,"@visible","false",changeset,version,delete)
+	d setTag(relationId,"@timestamp",timestamp,changeset,version,delete,0)
+	d setTag(relationId,"@user",user,changeset,version,delete,0)
+	d setTag(relationId,"@uid",uid,changeset,version,delete,0)
+	d setTag(relationId,"@version",version,changeset,version,delete,0)
+	d setTag(relationId,"@changeset",changeset,changeset,version,delete,0)
+	d setTag(relationId,"@fork",1,changeset,version,delete,0)
+	i delete d setTag(relationId,"@visible","false",changeset,version,delete,0)
 	;
 	; Changeset by version index
 	s ^relationVersion(relationId,"v",version)=changeset
@@ -163,8 +168,8 @@ addDiff(sRelation,delete,changeset)	 ; Public ; Add a relation
 	s sequenceNo=0
 	i line'["/>" f  d  i line["</relation>" q
 	. s line=$$read^stream(.sRelation)
-	. i line["<member" s sequenceNo=sequenceNo+1 d addMember(.sRelation,relationId,sequenceNo,changeset,version,delete)
-	. i line["<tag" d addTag(.sRelation,relationId,changeset,version,delete)
+	. i line["<member" s sequenceNo=sequenceNo+1 d addMember(.sRelation,relationId,sequenceNo,changeset,version,delete,0) q
+	. i line["<tag" d addTag(.sRelation,relationId,changeset,version,delete,0) q
 	;
 	i 'delete d indexTags(relationId)
 	;
@@ -182,10 +187,16 @@ addDiff(sRelation,delete,changeset)	 ; Public ; Add a relation
 	s ^response($j,rSeq,"element")="relation"
 	;
 	d onEdit^user(uid)
+	;
+	; Update metrics
+	i version=1 d update^metric("fosmRelationCount",1)
+	i delete d update^metric("fosmRelationCount",-1)
+	d update^metric("fosmRelationEdits",1)
+	;
 	q 1
 	
 	
-addMember(sRelation,relationId,sequenceNo,changeset,version,delete)	     ; Private ; Add a member to a relation
+addMember(sRelation,relationId,sequenceNo,changeset,version,delete,conflict)	     ; Private ; Add a member to a relation
 	;
 	n line,type,role,ref
 	;
@@ -199,21 +210,21 @@ addMember(sRelation,relationId,sequenceNo,changeset,version,delete)	     ; Priva
 	i ref<0 s ref=$g(^temp($j,type,ref)) ; TODO: This could be a forward reference - if undef then allocate at this point and use when we get to it.
 	;
 	i type'="" d
-	. i 'delete s ^relation(relationId,"seq",sequenceNo,"type")=type
 	. s ^c(changeset,"r",relationId,"v",version,"s",sequenceNo,"t")=type
+	. i 'conflict,'delete s ^relation(relationId,"seq",sequenceNo,"type")=type
 	;
 	i ref'="" d
-	. i 'delete s ^relation(relationId,"seq",sequenceNo,"ref")=ref
 	. s ^c(changeset,"r",relationId,"v",version,"s",sequenceNo,"i")=ref
+	. i 'conflict,'delete s ^relation(relationId,"seq",sequenceNo,"ref")=ref
 	;
-	i 'delete s ^relation(relationId,"seq",sequenceNo,"role")=role
 	s ^c(changeset,"r",relationId,"v",version,"s",sequenceNo,"r")=role
+	i 'conflict,'delete s ^relation(relationId,"seq",sequenceNo,"role")=role
 	;
-	i 'delete s ^relationMx(type,ref,relationId)=""
+	i 'conflict,'delete s ^relationMx(type,ref,relationId)=""
 	q
 	
 	
-addTag(sRelation,relationId,changeset,version,delete)	   ; Private ; Load a tag and add it
+addTag(sRelation,relationId,changeset,version,delete,conflict)	   ; Private ; Load a tag and add it
 	;
 	n line,k,v
 	;
@@ -226,15 +237,18 @@ addTag(sRelation,relationId,changeset,version,delete)	   ; Private ; Load a tag 
 	s v=$$getAttribute^osmXml(line,"v")
 	i v["'" s v=$$xmlEscapeApostrophe(v)
 	i $l(v)>4000 s v=$e(v,1,4000)_".."
-	d setTag(relationId,k,v,changeset,version,delete)
+	d setTag(relationId,k,v,changeset,version,delete,conflict)
 	q
 	
 	
-setTag(relationId,k,v,changeset,version,delete)	 ; Private ; Add a tag
+setTag(relationId,k,v,changeset,version,delete,conflict)	 ; Private ; Add a tag
 	;
-	i k="" q
-	i 'delete s ^relationtag(relationId,k)=v
+	; Add to changeset
 	s ^c(changeset,"r",relationId,"v",version,"t",k)=v
+	;
+	; Add to active dataset	
+	i 'conflict,'delete d
+	. s ^relationtag(relationId,k)=v
 	q
 	
 	
@@ -282,19 +296,13 @@ xml(indent,relationId,select)	  ; Public ; Generate xml for a relation
 	n user,uid,uidUser,timestamp,version,changeset
 	n xml
 	;
-	s xml=""
-	;
-	i '$$select^osmXml(select,"relation") q ""
-	;
-	s indent=indent_"  "
-	;
 	s user=$g(^relationtag(relationId,"@user"))
 	s uid=$g(^relationtag(relationId,"@uid"))
 	s timestamp=$g(^relationtag(relationId,"@timestamp"))
 	s version=$g(^relationtag(relationId,"@version"))
 	s changeset=$g(^relationtag(relationId,"@changeset"))
 	;
-	s xml=indent_"<relation"
+	s xml="<relation"
 	s xml=xml_$$attribute^osmXml("id",relationId)
 	s xml=xml_$$attribute^osmXml("visible","true")
 	i timestamp'="" s xml=xml_$$attribute^osmXml("timestamp",timestamp)
@@ -304,33 +312,23 @@ xml(indent,relationId,select)	  ; Public ; Generate xml for a relation
 	i uid'="" s xml=xml_$$attribute^osmXml("uid",uid)
 	;
 	s xml=xml_">"_$c(13,10)
-	w xml
-	s xml=""
 	;
-	d xmlMembers(relationId,indent,select)
+	d xmlMembers(relationId,.xml)
 	;
-	d xmlTags(relationId,indent,select)
-	s xml=xml_indent_"</relation>"_$c(13,10)
-	w xml
-	s xml=""
+	d xmlTags(relationId,.xml)
+	s xml=xml_"</relation>"_$c(13,10)
 	;
 	q xml
 	
 	
-xmlMembers(wayId,indent,select)	; Public ; Generate xml for a relation's members
+xmlMembers(wayId,xml)	; Public ; Generate xml for a relation's members
 	;
-	n seq,xml,type,ref,role
-	;
-	s xml=""
-	;
-	i '$$select^osmXml(select,"member") q ""
-	;
-	s indent=indent_"  "
+	n seq,type,ref,role
 	;
 	s seq=""
 	f  d  i seq="" q
 	. s seq=$o(^relation(relationId,"seq",seq)) i seq="" q
-	. s xml=xml_indent_"<member"
+	. s xml=xml_"<member"
 	. s type=$g(^relation(relationId,"seq",seq,"type"))
 	. s ref=$g(^relation(relationId,"seq",seq,"ref"))
 	. s role=$g(^relation(relationId,"seq",seq,"role"))
@@ -338,32 +336,24 @@ xmlMembers(wayId,indent,select)	; Public ; Generate xml for a relation's members
 	. i ref'="" s xml=xml_$$attribute^osmXml("ref",ref)
 	. s xml=xml_$$attribute^osmXml("role",role)
 	. s xml=xml_"/>"_$c(13,10)
-	. w xml
-	. s xml=""
+	. i $l(xml)>10000 w xml s xml=""
 	q
 	
 	
-xmlTags(id,indent,select)	      ; Public ; Generate xml for a relation's tags
+xmlTags(id,xml)	      ; Public ; Generate xml for a relation's tags
 	;
-	n k,xml
-	;
-	s xml=""
-	;
-	i '$$select^osmXml(select,"tag") q ""
-	;
-	s indent=indent_"  "
+	n k
 	;
 	s k=""
 	f  d  i k="" q
 	. s k=$o(^relationtag(id,k)) i k="" q
 	. i $e(k,1)="@" s k="@zzzzzzzzzzzzzzzzzz" q  ; Skip attributes
 	. i $d(^relationtag(id,k))#10=0 q
-	. s xml=xml_indent_"<tag"
+	. s xml=xml_"<tag"
 	. s xml=xml_$$attribute^osmXml("k",k)
 	. s xml=xml_" v='"_^relationtag(id,k)_"'" ; Tags are stored as escaped strings
 	. s xml=xml_"/>"_$c(13,10)
-	. w xml
-	. s xml=""
+	. i $l(xml)>10000 w xml s xml=""
 	q
 	
 	

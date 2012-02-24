@@ -94,6 +94,7 @@ nodes	;
 	. . i count#10000=0 d
 	. . . s ^planetDump("nodeCount")=count
 	. . . s ^planetDump("nodeCheckpoint")=q_"|"_n
+	s ^planetDump("nodeCount")=count
 	;
 	q
 	
@@ -113,6 +114,7 @@ ways	;
 	. i count#10000=0 d
 	. . s ^planetDump("wayCount")=count
 	. . s ^planetDump("wayCheckpoint")=w
+	s ^planetDump("wayCount")=count
 	;
 	q
 	
@@ -133,5 +135,6 @@ relations	;
 	. i count#10000=0 d
 	. . s ^planetDump("relationCount")=count
 	. . s ^planetDump("relationCheckpoint")=r
+	s ^planetDump("relationCount")=count
 	;
 	q

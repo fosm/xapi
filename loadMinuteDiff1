@@ -1,0 +1,3 @@
+. ./scripts06/profile_zappy1
+cd $zappy/zappy1/data06
+$gtmrun ^loadDiff zappyDiff1

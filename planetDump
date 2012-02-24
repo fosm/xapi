@@ -1,0 +1,5 @@
+. /pine01/scripts/profile
+cd /pine01/data
+$gtmrun ^planetDump planetDump
+
+

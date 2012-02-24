@@ -1,0 +1,7 @@
+# Make xapid
+#
+source profile
+gcc -c xapid.c -I$gtm_dist
+gcc xapid.o -o xapid -L$gtm_dist -Wlgtmshr -Wlc -WR $gtm_dist/libgtmshr.so
+
+echo "Done"

@@ -1,0 +1,7 @@
+# Make xapi
+#
+source profile
+gcc -c xapi.c -I$gtm_dist
+gcc xapi.o -o xapi -L$gtm_dist -Wlgtmshr -Wlc -WR $gtm_dist/libgtmshr.so
+
+echo "Done"

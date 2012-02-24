@@ -19,7 +19,7 @@ add(sWay,delete)	; Public ; Add a way
 	; #sWay = stream object containing way
 	;
 	n line,wayId,ndSeq,timestamp,user,uid,version,changeset
-	n a,currentUid,blockedByUid
+	n conflict,a,currentUid,blockedByUid
 	;
 	s line=sWay("current")
 	;
@@ -41,46 +41,43 @@ add(sWay,delete)	; Public ; Add a way
 	. . s line=$$read^stream(.sWay)
 	;
 	; Conflict checks
+	s conflict=0
 	s currentUid=$g(^waytag(wayId,"@uid"),0)
 	s a=version_$c(1)_changeset_$c(1)_timestamp_$c(1)_uid
 	;
 	; Don't load forked elements
-	i $d(^waytag(wayId,"@fork")) d  q
-	. ;
-	. ; Log conflict
+	i 'conflict,$d(^waytag(wayId,"@fork")) d
+	. s conflict=1
 	. d log^conflict("way",wayId,currentUid,a,"Edited in fosm")
-	. ;
-	. ; Skip the rest of the element
-	. i line["/>" q
-	. f  d  i line["</way>" q
-	. . s line=$$read^stream(.sWay)
 	;
 	; Don't load edits from blocked users
-	i uid'="",$g(^user(uid,"osmImport"))="block" d  q
+	i 'conflict,uid'="",$g(^user(uid,"osmImport"))="block" d
+	. s conflict=1
 	. s blockedByUid=$g(^user(uid,"blockedByUid"),uid)
-	. ;
-	. ; Log conflict
-	. d log^conflict("way",wayId,blockedByUid,a,"User #"_uid_" ("_^user(uid,"name")_") blocked by "_blockedByUid)
-	. ;
-	. ; Skip the rest of the element
-	. i line["/>" q
-	. f  d  i line["</way>" q
-	. . s line=$$read^stream(.sWay)
+	. d log^conflict("way",wayId,blockedByUid,a,"User #"_uid_" ("_$g(^user(uid,"name"),"unknown")_") blocked by "_blockedByUid)
 	;
-	d delete(wayId,changeset,delete)
+	; Don't delete if current user's edits are marked to be preserved
+	i 'conflict,delete,currentUid'="",$g(^user(currentUid,"osmImport"))="doNotDelete" d
+	. s conflict=1
+	. s blockedByUid=$g(^user(currentUid,"blockedByUid"),currentUid)
+	. d log^conflict("way",wayId,blockedByUid,a,"Deletion of element belonging to #"_currentUid_" ("_$g(^user(currentUid,"name"),"unknown")_") preserved.  Do not delete requested by user #"_blockedByUid)
 	;
+	; If no conflict then delete old way
+	i 'conflict d delete(wayId,changeset,delete)
 	;
-	; Way attributes
-	d setTag(wayId,"@timestamp",timestamp,changeset,version,delete)
-	d setTag(wayId,"@user",user,changeset,version,delete)
-	d setTag(wayId,"@uid",uid,changeset,version,delete)
-	d setTag(wayId,"@version",version,changeset,version,delete)
-	d setTag(wayId,"@changeset",changeset,changeset,version,delete)
-	i delete d setTag(wayId,"@visible","false",changeset,version,delete)
+	; Add way attributes
+	d setTag(wayId,"@timestamp",timestamp,changeset,version,delete,conflict)
+	d setTag(wayId,"@user",user,changeset,version,delete,conflict)
+	d setTag(wayId,"@uid",uid,changeset,version,delete,conflict)
+	d setTag(wayId,"@version",version,changeset,version,delete,conflict)
+	d setTag(wayId,"@changeset",changeset,changeset,version,delete,conflict)
+	i delete d setTag(wayId,"@visible","false",changeset,version,delete,conflict)
+	i conflict d setTag(wayId,"@conflict","true",changeset,version,delete,conflict)
 	;
 	; Changeset by version index
-	s ^wayVersion(wayId,"v",version)=changeset
-	s ^wayVersion(wayId,"c",changeset,version)=""
+	i 'conflict d
+	. s ^wayVersion(wayId,"v",version)=changeset
+	. s ^wayVersion(wayId,"c",changeset,version)=""
 	;
 	; Changeset headers
 	s ^c(changeset)=""
@@ -94,48 +91,58 @@ add(sWay,delete)	; Public ; Add a way
 	. ;
 	. f  d  i line["</way>" q
 	. . s line=$$read^stream(.sWay)
-	. . i line["<nd" s ndSeq=ndSeq+1 d nd(wayId,ndSeq,line,changeset,version,delete) q
-	. . i line["<tag" d addTag(.sWay,wayId,changeset,version,delete) q
+	. . i line["<nd" s ndSeq=ndSeq+1 d nd(wayId,ndSeq,line,changeset,version,delete,conflict) q
+	. . i line["<tag" d addTag(.sWay,wayId,changeset,version,delete,conflict) q
 	;
 	; Index the tags for this way
-	i 'delete d indexTags(wayId)
+	i 'conflict,'delete d indexTags(wayId)
 	;
-	; Create export index
-	s ^export($$nowZulu^date(),"w",changeset,wayId,version)=""
+	; Create export index (don't add conflicted ways to the index)
+	i 'conflict s ^export($$nowZulu^date(),"w",changeset,wayId,version)=""
 	;
 	; Update user class
 	d add^user(uid,user)
 	;
 	d onEdit^user(uid)
+	;
+	; Update metrics (don't count conflicted ways)
+	i 'conflict d
+	. i version=1 d update^metric("osmWayCount",1)
+	. i delete d update^metric("osmWayCount",-1)
+	. d update^metric("osmWayEdits",1)
+	;
 	q
 	
 	
-import(sWay,delete)	; Public ; Import a way, add to changeset only at this point
+import(sWay,delete)	; Public ; Import a way to the changeset only
 	; #sWay = stream object containing way
 	;
-	n line,wayId,ndSeq,timestamp,user,uid,version,changeset
+	n line,wayId,version,changeset,timestamp,user,uid
+	n ndSeq
+	n fork,visible,qsNew,a
 	;
 	s line=sWay("current")
 	;
 	s wayId=$$getAttribute^osmXml(line,"id")
 	s version=$$getAttribute^osmXml(line,"version")
 	s changeset=$$getAttribute^osmXml(line,"changeset")
-	;
-	; Update - changeset
-	s ^c(changeset)=""
-	s ^c(changeset,"w",wayId)=""
-	s ^c(changeset,"w",wayId,"v",version)=""
-	;
 	s timestamp=$$getAttribute^osmXml(line,"timestamp")
 	s user=$$getAttribute^osmXml(line,"user")
 	i user["'" s user=$$xmlEscapeApostrophe(user)
 	s uid=$$getAttribute^osmXml(line,"uid")
 	;
-	; Update - way attributes
-	s visible="" i delete s visible="false"
-	s a=version_$c(1)_changeset_$c(1)_timestamp_$c(1)_uid_$c(1)_visible_$c(1)_$c(1)	
-	s ^c(changeset,"w",wayId,"v",version,"a")=a
-	s ^temp($j,"loadDiff","w",wayId,"a")=a
+	; Changeset headers
+	s ^c(changeset)=""
+	s ^c(changeset,"w",wayId)=""
+	s ^c(changeset,"w",wayId,"v",version)=""
+	;
+	; Add way attributes
+	s ^c(changeset,"w",wayId,"v",version,"t","@timestamp")=timestamp
+	s ^c(changeset,"w",wayId,"v",version,"t","@user")=user
+	s ^c(changeset,"w",wayId,"v",version,"t","@uid")=uid
+	s ^c(changeset,"w",wayId,"v",version,"t","@version")=version
+	s ^c(changeset,"w",wayId,"v",version,"t","@changeset")=changeset
+	i delete s ^c(changeset,"w",wayId,"v",version,"t","@visible")="false"
 	;
 	; If there are nodes and/or tags then process these
 	i line'["/>" d
@@ -144,169 +151,80 @@ import(sWay,delete)	; Public ; Import a way, add to changeset only at this point
 	. ;
 	. f  d  i line["</way>" q
 	. . s line=$$read^stream(.sWay)
-	. . i line["<nd" s ndSeq=ndSeq+1 d importNode(wayId,ndSeq,line,changeset,version,delete) q
-	. . i line["<tag" d importTag(.sWay,wayId,changeset,version,delete) q
+	. . i line["<nd" s ndSeq=ndSeq+1 d addNodeToChangeset(wayId,ndSeq,line,changeset,version) q
+	. . i line["<tag" d addTagToChangeset(.sWay,wayId,changeset,version) q
 	;
 	; Update user class
 	d add^user(uid,user)
 	;
 	d onEdit^user(uid)
+	;
+	; Add to import set
+	s fork=0
+	s visible="" i delete s visible="false"
+	s qsNew="" ; We don't know the bbox until all the nodes have been applied
+	s a=version_$c(1)_changeset_$c(1)_timestamp_$c(1)_uid_$c(1)_visible_$c(1)_fork_$c(1)_qsNew
+	s ^temp($j,"loadDiff","w",wayId,"a")=a
 	q
 	
 	
-importNode(wayId,ndSeq,line,changeset,version,delete)	; Private ; Load a way node
+addWayFromChangeset(changeset,wayId,version)	; Public ; Apply a way from a changeset to the active database
 	;
-	n nodeId
+	n timestamp,user,uid,delete,k,value,ndSeq,nodeId
 	;
-	s nodeId=$$getAttribute^osmXml(line,"ref")
-	; i nodeId<0 s nodeId=$g(^temp($j,"node",nodeId)) ; Get allocated id from new element map
 	;
-	s ^c(changeset,"w",wayId,"v",version,"n",ndSeq)=nodeId
+	s timestamp=^c(changeset,"w",wayId,"v",version,"t","@timestamp")
+	s user=^c(changeset,"w",wayId,"v",version,"t","@user")
+	s uid=^c(changeset,"w",wayId,"v",version,"t","@uid")
+	s delete=$g(^c(changeset,"w",wayId,"v",version,"t","@visible"))="false"
 	;
-	q
-	
-	
-importTag(sWay,wayId,changeset,version,delete)	; Private ; Load a tag and add it
+	; Delete the old way from the active database
+	d delete(wayId,changeset,delete)
 	;
-	n k,u,v
+	; Add way attributes
+	s ^waytag(wayId,"@timestamp")=timestamp
+	s ^waytag(wayId,"@user")=user
+	s ^waytag(wayId,"@uid")=uid
+	s ^waytag(wayId,"@version")=version
+	s ^waytag(wayId,"@changeset")=changeset
+	i delete s ^waytag(wayId,"@visible")="false"
 	;
-	s line=sWay("current")
-	i line'["/>" f  d  i line["/>" q
-	. s line=line_$$read^stream(.sWay)
-	;
-	s k=$$getAttribute^osmXml(line,"k") i k="" q
-	;
-	; Get internal value for the key or assign one
-	s u=$g(^keyx(key))
-	i u="" d
-	. l +^key
-	. s (u,^key)=^key+1
-	. s ^key(u)=key
-	. s ^keyx(key)=u
-	. l -^key
-	;
-	i $l(k)>100 s k=$e(k,1,100)_".."
-	s v=$$getAttribute^osmXml(line,"v")
-	i v["'" s v=$$xmlEscapeApostrophe(v) ; The planet export doesn't escape apostrophes
-	i $l(v)>4000 s v=$e(v,1,4000)_".."
-	;
-	s ^c(changeset,"w",wayId,"v",version,"u",u)=v
-	;
-	q
-	
-	
-apply(changeset,wayId,version)	; Public ; Apply a way from a changeset to the active database
-	;
-	; TODO: This looks rubbish...
-	; Where's ^way(id,seq) get updated?
-	; Should update first then calculate bbox after all nodes have been added
-	; Should not be writing to ^e(qs,"w"...)
-	; Other?
-	;
-	n qsOld,a,delete,qsNew,l
-	n u,key,value,intValue
-	;
-	s qsOld=$p($g(^way(wayId)),$c(1),1)
-	;
-	s a=^c(changeset,"n",wayId,"v",version,"a")
-	s delete=($p(a,$c(1),5)="false")
-	d bbox(wayId,.bllat,.bllon,.trlat,.trlon)
-	s qsNew=$$bbox^quadString(bllat,bllon,trlat,trlon)
-	i qsNew="" s qsNew="*"
-	s $p(a,$c(1),6)=qsNew
-	;
-	; Update - node
-	i 'delete d
-	. ;
-	. ; If the qs key has changed then delete the old entries
-	. i qsOld'="",qsOld'=qsNew d
-	. . k ^e(qsOld,"w",nodeId,"a")
-	. ;
-	. ; Update the node with new values
-	. s ^e(qsNew,"n",nodeId,"a")=$p(a,$c(1),1,6)
-	;
-	; Update - changeset by version index
-	s ^wayVersion(wayId,"q")=qsNew
+	; Changeset by version index
 	s ^wayVersion(wayId,"v",version)=changeset
 	s ^wayVersion(wayId,"c",changeset,version)=""
 	;
-	; Update process <tag> elements
-	s u=""
-	f  d  i u="" q
-	. s u=$o(^c(changeset,"w",wayId,"v",version,"u",u)) i u="" q
-	. s value=^c(changeset,"w",wayId,"v",version,"u",u)
-	. d applyTag(qsOld,qsNew,wayId,u,value,changeset,version,delete)
+	; Process tags
+	i 'delete d
+	. s k=""
+	. f  d  i k="" q
+	. . s k=$o(^c(changeset,"w",wayId,"v",version,"t",k)) i k="" q
+	. . i $e(k,1)="@" q
+	. . s value=^c(changeset,"w",wayId,"v",version,"t",k)
+	. . s ^waytag(wayId,k)=value
 	;
-	; Delete all tags that are not on the new version of the way
-	s u=""
-	i qsOld'="" f  d  i u="" q
-	. s u=$o(^e(qsOld,"w",wayId,"u",u)) i u="" q
-	. s key=^key(u)
-	. i 'delete,$d(^c(changeset,"w",wayId,"v",version,"u",u)) q
-	. s value=^e(qsOld,"w",wayId,"u",u)
-	. s intValue=value
-	. i $l(intValue)>100 s intValue=$e(value,1,100)_".."
-	. i intValue'="" k ^wayx(key,intValue,qsOld,wayId)
-	. k ^wayx(key,"*",qsOld,wayId)
-	. k ^e(qsOld,"w",wayId,"u",u)
+	; Process nodes
+	s ndSeq=""
+	f  d  i ndSeq="" q
+	. s ndSeq=$o(^c(changeset,"w",wayId,"v",version,"n",ndSeq)) i ndSeq="" q
+	. s nodeId=^c(changeset,"w",wayId,"v",version,"n",ndSeq)
+	. i 'delete d
+	. . s ^way(wayId,ndSeq)=nodeId
+	. . s ^wayByNode(nodeId,wayId)=""
+	. ;
+	. s ^nodeVersion(nodeId,"c",changeset,"w",wayId)=""
 	;
-	i delete,qsOld'="" k ^e(qsOld,"w",wayId)
+	; Index the tags for this way
+	i 'delete d indexTags(wayId)
 	;
 	; Create export index
 	s ^export($$nowZulu^date(),"w",changeset,wayId,version)=""
 	;
-	q
-	
-	
-addTagFromChangeset(qsOld,qsNew,nodeId,u,newValue,changeset,version,delete)	; Private ; Update (add/modify/delete) a key/value pair for a node
-	;
-	; Usage:
-	; d updateTag(qsOld,qsNew,nodeId,key,newValue,newChangeset,newVersion,delete)
-	;  qsOld        - qs of the old node. Null if this is a new node with no previous version
-	;  qsNew        - qs of the new node. Null if this tag is to be deleted
-	;  nodeId       - id of the node in question
-	;  key          - the tag's key
-	;  newValue     - the new value of the tag, may be null
-	;  newChangeset - the id of the changeset for this update
-	;  newVersion   - the version number of the node being updated
-	;  delete       - 1 if the whole node is being deleted, 0 if this is an update
-	;
-	n key,oldValue,intNewValue,intOldValue
-	;
-	s key=^key(u)
-	;
-	s oldValue=""
-	i qsOld'="" s oldValue=$g(^e(qsOld,"n",nodeId,"u",u))
-	;
-	s intNewValue=newValue
-	i $l(newValue)>100 s intNewValue=$e(newValue,1,100)_".."
-	;
-	s intOldValue=oldValue
-	i $l(oldValue)>100 s intOldValue=$e(oldValue,1,100)_".."
-	;
-	; Delete the tag and it's indexes if the node is being deleted
-	i delete d
-	. ; k ^e(qsOld,"n",nodeId,"u",u) ; Don't actually need to do this becaue the whole node will be deleted anyway
-	. i intOldValue'="" k ^nodex(key,intOldValue,qsOld,nodeId)
-	. k ^nodex(key,"*",qsOld,nodeId)
-	;
-	; Add/Update the tag for the element
-	e  d
-	. i (oldValue'=newValue)!(qsOld'=qsNew) d  ; Optimisation, can be used when all t tags have gone
-	. . i qsOld'="",qsOld'=qsNew k ^e(qsOld,"n",nodeId,"u",u)
-	. . i qsNew'="" s ^e(qsNew,"n",nodeId,"u",u)=newValue
-	. ;
-	. ; Update the two key/value indexes
-	. i (intOldValue'=intNewValue)!(qsOld'=qsNew) d
-	. . i qsOld'="",intOldValue'="" k ^nodex(key,intOldValue,qsOld,nodeId)
-	. . i qsNew'="",intNewValue'="" s ^nodex(key,intNewValue,qsNew,nodeId)=""
-	. . i qsOld'="" k ^nodex(key,"*",qsOld,nodeId)
-	. . i qsNew'="" s ^nodex(key,"*",qsNew,nodeId)=""
+	; Update metrics
+	i version=1 d update^metric("osmWayCount",1)
+	i delete d update^metric("osmWayCount",-1)
+	d update^metric("osmWayEdits",1)
 	;
 	q
-	
-	
-	
 	
 	
 addDiff(sWay,delete,changeset)	; Public ; Add a way
@@ -348,13 +266,13 @@ addDiff(sWay,delete,changeset)	; Public ; Add a way
 	i user["'" s user=$$xmlEscapeApostrophe(user)
 	;
 	; Way attributes
-	d setTag(wayId,"@timestamp",timestamp,changeset,version,delete)
-	d setTag(wayId,"@user",user,changeset,version,delete)
-	d setTag(wayId,"@uid",uid,changeset,version,delete)
-	d setTag(wayId,"@version",version,changeset,version,delete)
-	d setTag(wayId,"@changeset",changeset,changeset,version,delete)
-	d setTag(wayId,"@fork",1,changeset,version,delete)
-	i delete d setTag(wayId,"@visible","false",changeset,version,delete)
+	d setTag(wayId,"@timestamp",timestamp,changeset,version,delete,0)
+	d setTag(wayId,"@user",user,changeset,version,delete,0)
+	d setTag(wayId,"@uid",uid,changeset,version,delete,0)
+	d setTag(wayId,"@version",version,changeset,version,delete,0)
+	d setTag(wayId,"@changeset",changeset,changeset,version,delete,0)
+	d setTag(wayId,"@fork",1,changeset,version,delete,0)
+	i delete d setTag(wayId,"@visible","false",changeset,version,delete,0)
 	;
 	; Changeset by version index
 	s ^wayVersion(wayId,"v",version)=changeset
@@ -373,8 +291,8 @@ addDiff(sWay,delete,changeset)	; Public ; Add a way
 	. s predecessors=""
 	. f  d  i line["</way>" q
 	. . s line=$$read^stream(.sWay)
-	. . i line["<nd" s ndSeq=ndSeq+1 d nd(wayId,ndSeq,line,changeset,version,delete) q
-	. . i line["<tag" d addTag(.sWay,wayId,changeset,version,delete,.predecessors) q
+	. . i line["<nd" s ndSeq=ndSeq+1 d nd(wayId,ndSeq,line,changeset,version,delete,0) q
+	. . i line["<tag" d addTag(.sWay,wayId,changeset,version,delete,0,.predecessors) q
 	. ;
 	. ; Inject a meta:predecessors tag if there are any predecessors for this version
 	. i predecessors'="" d
@@ -401,25 +319,54 @@ addDiff(sWay,delete,changeset)	; Public ; Add a way
 	s ^response($j,rSeq,"element")="way"
 	;
 	d onEdit^user(uid)
+	;
+	; Update metrics
+	i version=1 d update^metric("fosmWayCount",1)
+	i delete d update^metric("fosmWayCount",-1)
+	d update^metric("fosmWayEdits",1)
+	;
 	q 1
 	
 	
-nd(wayId,ndSeq,line,changeset,version,delete)	; Private ; Load a way node
+nd(wayId,ndSeq,line,changeset,version,delete,conflict)	; Private ; Load a way node
 	;
 	n nodeId
 	;
 	s nodeId=$$getAttribute^osmXml(line,"ref")
 	i nodeId<0 s nodeId=$g(^temp($j,"node",nodeId)) ; Get allocated id from new element map
 	;
-	i 'delete s ^way(wayId,ndSeq)=nodeId
+	; TODO: Validate that node actually exists
+	i nodeId="" w 1/0
+	;
+	; Write to changeset
 	s ^c(changeset,"w",wayId,"v",version,"n",ndSeq)=nodeId
 	;
-	i 'delete,nodeId'="" s ^wayByNode(nodeId,wayId)=""
-	i nodeId'="" s ^nodeVersion(nodeId,"c",changeset,"w",wayId)=""	
+	; If there was no conflict then update active database as well
+	i 'conflict d
+	. i 'delete d
+	. . s ^way(wayId,ndSeq)=nodeId
+	. . s ^wayByNode(nodeId,wayId)=""
+	. ;
+	. s ^nodeVersion(nodeId,"c",changeset,"w",wayId)=""	
 	q
 	
 	
-addTag(sWay,wayId,changeset,version,delete,predecessors)	; Private ; Load a tag and add it
+addNodeToChangeset(wayId,ndSeq,line,changeset,version)	; Private ; Load a way node to changeset
+	;
+	n nodeId
+	;
+	s nodeId=$$getAttribute^osmXml(line,"ref")
+	i nodeId<0 s nodeId=$g(^temp($j,"node",nodeId)) ; Get allocated id from new element map
+	;
+	i nodeId="" w 1/0
+	;
+	; Write to changeset
+	s ^c(changeset,"w",wayId,"v",version,"n",ndSeq)=nodeId
+	;
+	q
+	
+	
+addTag(sWay,wayId,changeset,version,delete,conflict,predecessors)	; Private ; Load a tag and add it
 	;
 	n k,v,i
 	;
@@ -428,7 +375,7 @@ addTag(sWay,wayId,changeset,version,delete,predecessors)	; Private ; Load a tag 
 	. s line=line_$$read^stream(.sWay)
 	;
 	s k=$$getAttribute^osmXml(line,"k") i k="" q
-	i $l(k)>100 s k=$e(k,1,100)_".."
+	i $l(k)>70 s k=$e(k,1,70)_".."
 	s v=$$getAttribute^osmXml(line,"v")
 	i v["'" s v=$$xmlEscapeApostrophe(v) ; The planet export doesn't escape apostrophes
 	i $l(v)>4000 s v=$e(v,1,4000)_".."
@@ -443,12 +390,51 @@ addTag(sWay,wayId,changeset,version,delete,predecessors)	; Private ; Load a tag 
 	; If the meta:id is different then it means that the way has been either merged or split
 	; In both cases we add the original id value to this way's predecessor list
 	i k="meta:id" d  q
-	. f i=1:1:$l(v,";") s predecessorId=$p(v,";",i) i predecessorId'=wayId s predecessors=predecessors_";"_predecessorId
+	. f i=1:1:$l(v,";") s predecessorId=$p(v,";",i) i predecessorId'=wayId,predecessors'[predecessorId s predecessors=predecessors_";"_predecessorId
 	;
 	; Swallow any meta:predecessors tags as these apply only to one version
 	i k="meta:predecessors" q
 	;
-	i 'delete s ^waytag(wayId,k)=v
+	; Add to changeset
+	s ^c(changeset,"w",wayId,"v",version,"t",k)=v
+	;
+	; Add to active dataset	
+	i 'conflict,'delete d
+	. s ^waytag(wayId,k)=v
+	;
+	q
+	
+	
+addTagToChangeset(sWay,wayId,changeset,version)	; Private ; Load a tag and add it to the changeset
+	;
+	n k,v,i
+	;
+	s line=sWay("current")
+	i line'["/>" f  d  i line["/>" q
+	. s line=line_$$read^stream(.sWay)
+	;
+	s k=$$getAttribute^osmXml(line,"k") i k="" q
+	i $l(k)>70 s k=$e(k,1,70)_".."
+	s v=$$getAttribute^osmXml(line,"v")
+	i v["'" s v=$$xmlEscapeApostrophe(v) ; The planet export doesn't escape apostrophes
+	i $l(v)>4000 s v=$e(v,1,4000)_".."
+	;
+	; Swallow meta:lastEdit tag
+	i k="meta:lastEdit" q
+	;
+	; Process meta:id tag
+	; If the meta:id is the same as the element's id then swallow it
+	i k="meta:id",v=wayId q
+	;
+	; If the meta:id is different then it means that the way has been either merged or split
+	; In both cases we add the original id value to this way's predecessor list
+	i k="meta:id" d  q
+	. f i=1:1:$l(v,";") s predecessorId=$p(v,";",i) i predecessorId'=wayId,predecessors'[predecessorId s predecessors=predecessors_";"_predecessorId
+	;
+	; Swallow any meta:predecessors tags as these apply only to one version
+	i k="meta:predecessors" q
+	;
+	; Add to changeset
 	s ^c(changeset,"w",wayId,"v",version,"t",k)=v
 	;
 	q
@@ -491,105 +477,20 @@ getTag(wayId,tag)	; Public ; Get the value of a tag for a way
 	q $g(^waytag(wayId,tag))
 	
 	
-setTag(wayId,k,v,changeset,version,delete)	 ; Private ; Add a tag
+setTag(wayId,k,v,changeset,version,delete,conflict)	 ; Private ; Add a tag
 	;
-	i k="" q
-	i 'delete s ^waytag(wayId,k)=v
+	; Add to changeset
 	s ^c(changeset,"w",wayId,"v",version,"t",k)=v
 	;
+	; Add to active dataset
+	i 'conflict,'delete d
+	. s ^waytag(wayId,k)=v
+	;
 	q
 	
 	
-xml(indent,wayId,select,meta)	    ; Public ; Generate xml for a way
-	;
-	n user,uid,timestamp,version,changeset
-	n xml
-	;
-	s xml=""
-	;
-	i '$$select^osmXml(select,"way") q ""
-	;
-	s indent=indent_"  "
-	;
-	s user=$g(^waytag(wayId,"@user"))
-	s uid=$g(^waytag(wayId,"@uid"))
-	s timestamp=$g(^waytag(wayId,"@timestamp"))
-	s version=$g(^waytag(wayId,"@version"))
-	s changeset=$g(^waytag(wayId,"@changeset"))
-	;
-	s xml=indent_"<way"
-	s xml=xml_$$attribute^osmXml("id",wayId)
-	s xml=xml_$$attribute^osmXml("visible","true")
-	i timestamp'="" s xml=xml_$$attribute^osmXml("timestamp",timestamp)
-	i version'="" s xml=xml_$$attribute^osmXml("version",version)
-	i changeset'="" s xml=xml_$$attribute^osmXml("changeset",changeset)
-	i user'="" s xml=xml_$$attribute^osmXml("user",user)
-	i uid'="" s xml=xml_$$attribute^osmXml("uid",uid)
-	;
-	s xml=xml_">"_$c(13,10)
-	w xml
-	s xml=""
-	;
-	d xmlNodes(wayId,indent,select)
-	;
-	; Inject meta:id tag
-	i $g(meta) d
-	. s xml=xml_indent_"<tag k='meta:id' v='"_wayId_"'/>"
-	. s xml=xml_indent_"<tag k='meta:lastEdit' v='"_timestamp_"'/>"
-	. w xml
-	. s xml=""
-	;
-	d xmlTags(wayId,indent,select)
-	s xml=xml_indent_"</way>"_$c(13,10)
-	w xml
-	s xml=""
-	;
-	q xml
 	
-	
-xmlNodes(wayId,indent,select)	; Public ; Generate xml for a way's nodes
-	;
-	n ndSeq,xml
-	;
-	s xml=""
-	;
-	i '$$select^osmXml(select,"nd") q ""
-	;
-	s indent=indent_"  "
-	;
-	s ndSeq=""
-	f  d  i ndSeq="" q
-	. s ndSeq=$o(^way(wayId,ndSeq)) i ndSeq="" q
-	. s xml=xml_indent_"<nd"
-	. s xml=xml_$$attribute^osmXml("ref",^way(wayId,ndSeq))
-	. s xml=xml_"/>"_$c(13,10)
-	. w xml
-	. s xml=""
-	q
-	
-	
-xmlTags(id,indent,select)	; Public ; Generate xml for a way's tags
-	;
-	n k,xml
-	;
-	s xml=""
-	;
-	i '$$select^osmXml(select,"tag") q ""
-	;
-	s indent=indent_"  "
-	;
-	s k=""
-	f  d  i k="" q
-	. s k=$o(^waytag(id,k)) i k="" q
-	. i $e(k,1)="@" s k="@zzzzzzzzzzzzzzzzzz" q  ; Skip attributes
-	. i $d(^waytag(id,k))#10=0 q
-	. s xml=xml_indent_"<tag"
-	. s xml=xml_$$attribute^osmXml("k",k)
-	. s xml=xml_" v='"_^waytag(id,k)_"'" ; Tags are stored as escaped strings
-	. s xml=xml_"/>"_$c(13,10)
-	. w xml
-	. s xml=""
-	q
+xml(indent,wayId,select,meta)	    ; Public ; Generate xml for a way	;	n user,uid,timestamp,version,changeset	n xml	;	s user=$g(^waytag(wayId,"@user"))	s uid=$g(^waytag(wayId,"@uid"))	s timestamp=$g(^waytag(wayId,"@timestamp"))	s version=$g(^waytag(wayId,"@version"))	s changeset=$g(^waytag(wayId,"@changeset"))	;	s xml="<way"	s xml=xml_$$attribute^osmXml("id",wayId)	s xml=xml_$$attribute^osmXml("visible","true")	i timestamp'="" s xml=xml_$$attribute^osmXml("timestamp",timestamp)	i version'="" s xml=xml_$$attribute^osmXml("version",version)	i changeset'="" s xml=xml_$$attribute^osmXml("changeset",changeset)	i user'="" s xml=xml_$$attribute^osmXml("user",user)	i uid'="" s xml=xml_$$attribute^osmXml("uid",uid)	s xml=xml_">"_$c(13,10)	;	d xmlNodes(wayId,.xml)	;	; Inject meta tags	i $g(meta) d	. s xml=xml_"<tag k='meta:id' v='"_wayId_"'/>"	. s xml=xml_"<tag k='meta:lastEdit' v='"_timestamp_"'/>"	;	d xmlTags(wayId,.xml)	s xml=xml_"</way>"_$c(13,10)	;	q xml		xmlNodes(wayId,xml)	; Public ; Generate xml for a way's nodes	;	n ndSeq	;	s ndSeq=""	f  d  i ndSeq="" q	. s ndSeq=$o(^way(wayId,ndSeq)) i ndSeq="" q	. s xml=xml_"<nd"	. s xml=xml_$$attribute^osmXml("ref",^way(wayId,ndSeq))	. s xml=xml_"/>"_$c(13,10)	. i $l(xml)>10000 w xml s xml=""	q		xmlTags(id,xml)	; Public ; Generate xml for a way's tags	;	n k	;	s k=""	f  d  i k="" q	. s k=$o(^waytag(id,k)) i k="" q	. i $e(k,1)="@" s k="@zzzzzzzzzzzzzzzzzz" q  ; Skip attributes	. i $d(^waytag(id,k))#10=0 q	. s xml=xml_"<tag"	. s xml=xml_$$attribute^osmXml("k",k)	. s xml=xml_" v='"_^waytag(id,k)_"'" ; Tags are stored as escaped strings	. s xml=xml_"/>"_$c(13,10)	. i $l(xml)>10000 w xml s xml=""	q	
 	
 	
 bbox(wayId,bllat,bllon,trlat,trlon,recalculate)	; Public ; Calculate the bbox for a way
@@ -629,6 +530,43 @@ bbox(wayId,bllat,bllon,trlat,trlon,recalculate)	; Public ; Calculate the bbox fo
 	;
 	q
 	
+	
+bboxChangeset(changesetId,wayId,version,bllat,bllon,trlat,trlon,recalculate)	; Public ; Calculate the bbox for a way in a changeset
+	;
+	; Inputs:
+	;  recalculate - 0 = used stored value if available (default).  The stored value may be wrong if nodes have been moved subsequently.
+	;                1 = recalculate from current node locations (slow).
+	;
+	n ndSeq,nodeId,latlon,lat,lon,qsBox,way
+	;	
+	s recalculate=$g(recalculate)=1
+	;
+	; Use previously calculated values if present
+	i 'recalculate d  i bllat'="" q
+	. s way=$g(^c(changesetId,"w",wayId,"v",version,"l"))
+	. s bllat=$p(way,$c(1),2)
+	. s bllon=$p(way,$c(1),3)
+	. s trlat=$p(way,$c(1),4)
+	. s trlon=$p(way,$c(1),5)
+	;
+	s bllat=999999,bllon=999999,trlat=-999999,trlon=-999999
+	s ndSeq=""
+	f  d  i ndSeq="" q
+	. s ndSeq=$o(^c(changesetId,"w",wayId,"v",version,"n",ndSeq)) i ndSeq="" q
+	. s nodeId=^c(changesetId,"w",wayId,"v",version,"n",ndSeq)
+	. ;
+	. ; Ignore if node does not exist (which is possible)
+	. s qsBox=$$qsBox^node(nodeId) i qsBox="" q  
+	. s latlon=$g(^e(qsBox,"n",nodeId,"l")) i latlon="" q
+	. ;
+	. s lat=$p(latlon,$c(1),1)
+	. s lon=$p(latlon,$c(1),2)
+	. i lat>trlat s trlat=lat
+	. i lat<bllat s bllat=lat
+	. i lon>trlon s trlon=lon
+	. i lon<bllon s bllon=lon
+	;
+	q
 	
 	
 	

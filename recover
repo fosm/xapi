@@ -1,0 +1,4 @@
+# Recover database after unexpected shutdown
+. /xapi/scripts/init
+$mupip journal -recover -backward "*"
+
