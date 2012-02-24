@@ -1,4 +1,4 @@
 #!/bin/bash
 source profile
 cd $zappy/data
-$gtm
+#$gtm
