@@ -71,10 +71,10 @@ if ($ENV{'REQUEST_METHOD'} eq 'POST') {
 	read(STDIN,$postData,$ENV{'CONTENT_LENGTH'});
 	$ENV{'POST_DATA'}=$postData;
 }
-#if ($ENV{'REQUEST_METHOD'} eq 'PUT') {
-#        read(STDIN,$payload,$ENV{'CONTENT_LENGTH'});
-#        $ENV{'PAYLOAD'}=$payload;
-#}
+if ($ENV{'REQUEST_METHOD'} eq 'PUT') {
+        read(STDIN,$payload,$ENV{'CONTENT_LENGTH'});
+        $ENV{'PAYLOAD'}=$payload;
+}
 
 # Walk ENV hash and print
 foreach $key (keys %ENV) {

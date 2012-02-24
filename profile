@@ -1,9 +1,8 @@
-zappy='/home/mdupont/experiments/fosm/pine02' ; export zappy
-gtm_dist="/usr/lib/fis-gtm/V5.4-002B_x86"; export gtm_dist
+zappy='/pine01' ; export zappy
+gtm_dist="$zappy/gtm"; export gtm_dist
 gtmx="$zappy/gtmx"; export gtmx
 gtmgbldir="$zappy/data/xapi_small.gld"; export gtmgbldir
-#gtmroutines="$zappy/scripts/o($zappy/scripts $zappy/serenji $gtmx $gtm_dist)"; export gtmroutines
-gtmroutines=". $zappy/scripts/ $gtmx $gtm_dist"; export gtmroutines
+gtmroutines="$zappy/scripts/o($zappy/scripts $zappy/serenji $gtmx $gtm_dist)"; export gtmroutines
 gtm="$gtmx/gtmrun ^direct gtm"; export gtm
 gtmrun="$gtmx/gtmrun" ; export gtmrun
 mupip="$gtm_dist/mupip"; export mupip
